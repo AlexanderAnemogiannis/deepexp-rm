@@ -33,7 +33,7 @@ def categorical_sample(prob_n):
     return (csprob_n > np.random.rand()).argmax()
 
 
-def get_traj(test_type, pa, env, episode_max_length, pg_resume=None, render=False):
+def get_traj(test_type, pa, env, episode_max_length, pg_resume=None, render=False, q_agent=None):
     """
     Run agent-environment loop for one whole episode (trajectory)
     Return dictionary of results
@@ -46,6 +46,11 @@ def get_traj(test_type, pa, env, episode_max_length, pg_resume=None, render=Fals
         net_handle = open(pg_resume, 'rb')
         net_params = cPickle.load(net_handle)
         pg_learner.set_net_params(net_params)
+
+    # Q network 
+    elif test_type == 'Q': 
+        assert(q_agent is not None)
+
 
     env.reset()
     rews = []
@@ -66,6 +71,10 @@ def get_traj(test_type, pa, env, episode_max_length, pg_resume=None, render=Fals
         elif test_type == 'Random':
             a = other_agents.get_random_action(env.job_slot)
 
+        elif test_type == 'Q':
+            state = np.array(list(np.array(ob).flat))
+            a = q_agent.greedy_policy(state[np.newaxis, :])
+
         ob, rew, done, info = env.step(a, repeat=True)
 
         rews.append(rew)
@@ -77,14 +86,17 @@ def get_traj(test_type, pa, env, episode_max_length, pg_resume=None, render=Fals
     return np.array(rews), info
 
 
-def launch(pa, pg_resume=None, render=False, plot=False, repre='image', end='no_new_job'):
+def launch(pa, pg_resume=None, render=False, plot=False, repre='image', end='no_new_job', q_resume=None):
 
     # ---- Parameters ----
 
     test_types = ['Tetris', 'SJF', 'Random']
 
-    if pg_resume is not None:
+    if (pg_resume is not None) and (q_resume is None):
         test_types = ['PG'] + test_types
+
+    if q_resume is not None:
+        test_types = ['Q'] + test_types
 
     env = environment.Env(pa, render, repre=repre, end=end)
 
@@ -110,8 +122,7 @@ def launch(pa, pg_resume=None, render=False, plot=False, repre='image', end='no_
         print("=============== " + str(seq_idx) + " ===============")
 
         for test_type in test_types:
-
-            rews, info = get_traj(test_type, pa, env, pa.episode_max_length, pg_resume)
+            rews, info = get_traj(test_type, pa, env, pa.episode_max_length, pg_resume=pg_resume, q_agent=q_resume)
 
             print "---------- " + test_type + " -----------"
 

@@ -9,6 +9,7 @@ import parameters
 import pg_re
 import pg_su
 import slow_down_cdf
+import dqn_re_test as dqn_re
 
 
 def script_usage():
@@ -152,6 +153,8 @@ def main():
     elif type_exp == 'test':
         # quick_test.launch(pa, pg_resume, render)
         slow_down_cdf.launch(pa, pg_resume, render, True)
+    elif type_exp == 'dqn_re':
+        dqn_re.launch(pa, pg_resume, render, repre='image', end='all_done')
     # elif type_exp == 'q_re':
     #     q_re.launch(pa, q_resume, render)
     else:
