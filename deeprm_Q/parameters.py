@@ -9,8 +9,8 @@ class Parameters:
 
         self.output_filename = 'data/tmp'
 
-        self.num_epochs = 10000         # number of training epochs
-        self.simu_len = 10             # length of the busy cycle that repeats itself
+        self.num_epochs = 10000        # number of training epochs
+        self.simu_len = 10             # number of jobs in a jobset (includes jobs of size 0)
         self.num_ex = 1                # number of sequences
 
         self.output_freq = 10          # interval for output and store parameters
@@ -34,7 +34,7 @@ class Parameters:
 
         self.new_job_rate = 0.7        # lambda in new job arrival Poisson Process
 
-        self.discount = 1           # discount factor
+        self.discount = 1              # discount factor
 
         # distribution for new job arrival
         self.dist = job_distribution.Dist(self.num_res, self.max_job_size, self.max_job_len)

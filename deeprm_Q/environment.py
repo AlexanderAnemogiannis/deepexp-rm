@@ -3,13 +3,35 @@ import math
 import matplotlib.pyplot as plt
 import theano
 
-
 import parameters
 
+from IPython import embed
 
 class Env:
+       
     def __init__(self, pa, nw_len_seqs=None, nw_size_seqs=None,
                  seed=42, render=False, repre='image', end='no_new_job'):
+        '''
+        initialize environment parameters and objects
+        input:  pa - clsas containing environment parameters
+                nw_len_seqs - matrix where the i'th row is job durations
+                              for the i'th jobset
+                nw_size_seqs - cube where the i'th row is a matrix of the
+                               resource demands for the i'th jobset
+                seed - used to randomly generate job sequences
+                render - indicates if env state should be plotted after
+                         each timestep
+                repre - how state is represented (image, compact)
+                end - specifies termination to be when there (1) are no new
+                      new jobs or (2) when all jobs have finishd processing
+                nw_dist - distribution of jobs (normal, bi_model_dist)
+        objects: machine - TODO
+                 job_slot - TODO
+                 job_backlog - TODO
+                 job_record - TODO
+                 extra_info - TODO
+
+        '''
 
         self.pa = pa
         self.render = render
@@ -27,10 +49,12 @@ class Env:
             np.random.seed(seed)
 
         if nw_len_seqs is None or nw_size_seqs is None:
-            # generate new work
+            # generate new work (for all job sequences and num_ex iterations of them)
             self.nw_len_seqs, self.nw_size_seqs = \
                 self.generate_sequence_work(self.pa.simu_len * self.pa.num_ex)
 
+            ### for each resource, determine the workload, given by the
+            ### resource demands of all jobs, summed over all time periods
             self.workload = np.zeros(pa.num_res)
             for i in xrange(pa.num_res):
                 self.workload[i] = \
@@ -38,6 +62,9 @@ class Env:
                     float(pa.res_slot) / \
                     float(len(self.nw_len_seqs))
                 print("Load on # " + str(i) + " resource dimension is " + str(self.workload[i]))
+
+            ### reshape job durations into a matrix, where each row is a
+            ### job sequence (and the number of job sequences is num_ex)
             self.nw_len_seqs = np.reshape(self.nw_len_seqs,
                                            [self.pa.num_ex, self.pa.simu_len])
             self.nw_size_seqs = np.reshape(self.nw_size_seqs,
@@ -56,7 +83,14 @@ class Env:
         self.job_record = JobRecord()
         self.extra_info = ExtraInfo(pa)
 
+
     def generate_sequence_work(self, simu_len):
+        """ 
+        Returns sequences of jobs, characterized by their resource demands
+        and duration, for simu_len = (timesteps/episode) * num_episodes 
+                                   = L * N (from HotNets paper)
+        --> note that for some timesteps, there may be no jobs
+        """
 
         nw_len_seq = np.zeros(simu_len, dtype=int)
         nw_size_seq = np.zeros((simu_len, self.pa.num_res), dtype=int)
@@ -69,32 +103,47 @@ class Env:
 
         return nw_len_seq, nw_size_seq
 
+
     def get_new_job_from_seq(self, seq_no, seq_idx):
+        """ 
+        instantializes a Job object
+        input:  seq_no - jobsets within an iteration
+                seq_idx - indexes jobs within a jobset
+        output: new_job - job object characterized 
+        """
         new_job = Job(res_vec=self.nw_size_seqs[seq_no, seq_idx, :],
                       job_len=self.nw_len_seqs[seq_no, seq_idx],
                       job_id=len(self.job_record.record),
                       enter_time=self.curr_time)
         return new_job
 
-    ### return image/compact representation of the environment, which includes 
-    ### 1) assigned jobs
-    ### 2) visible jobs to be assigned
-    ### 3) jobs in backlog
-    def observe(self):
-        if self.repre == 'image':
 
+    def observe(self):
+        """ 
+        Returns representation of system state.
+            image: a matrix whose 
+            compact: 
+
+        """
+        if self.repre == 'image':
+            ### ***
             backlog_width = int(math.ceil(self.pa.backlog_size / float(self.pa.time_horizon)))
 
-            image_repr = np.zeros((self.pa.network_input_height, self.pa.network_input_width))
+            ### (image) input to neural network, where the i'th row corresponds
+            ### to the (vectorized) system state at the i'th timestep
+            image_repr = np.zeros((self.pa.network_input_height,
+                                   self.pa.network_input_width))
 
-            ir_pt = 0 ### ***image representation pointer??
+            ### used for indexing vectorized representation of the system
+            ir_pt = 0 
 
             ### iterate over number of resources in the system
             for i in xrange(self.pa.num_res):
-
+                ### store i'th resource, with dim [time_horizon x res_slot]
                 image_repr[:, ir_pt: ir_pt + self.pa.res_slot] = self.machine.canvas[i, :, :]
                 ir_pt += self.pa.res_slot
 
+                ### iterate over (visible) jobs in the queue
                 for j in xrange(self.pa.num_nw):
 
                     if self.job_slot.slot[j] is not None:  # fill in a block of work
@@ -102,6 +151,7 @@ class Env:
 
                     ir_pt += self.pa.max_job_size
 
+            ### store backlog
             image_repr[: self.job_backlog.curr_size / backlog_width,
                        ir_pt: ir_pt + backlog_width] = 1
             if self.job_backlog.curr_size % backlog_width > 0:
@@ -109,6 +159,8 @@ class Env:
                            ir_pt: ir_pt + self.job_backlog.curr_size % backlog_width] = 1
             ir_pt += backlog_width
 
+            ### store elapsed time since last new job (as proportion of the max 
+            ### wait time for a new job)
             image_repr[:, ir_pt: ir_pt + 1] = self.extra_info.time_since_last_new_job / \
                                               float(self.extra_info.max_tracking_time_since_last_job)
             ir_pt += 1
@@ -119,11 +171,14 @@ class Env:
 
         elif self.repre == 'compact':
 
+            ### more efficient representation of system state, which includes
+            ### the allocated jobs, pending (visible) jobs, and backlog
             compact_repr = np.zeros(self.pa.time_horizon * (self.pa.num_res + 1) +  # current work
                                     self.pa.num_nw * (self.pa.num_res + 1) +        # new work
                                     1,                                              # backlog indicator
                                     dtype=theano.config.floatX)
 
+            ### indexes columns of compact representation
             cr_pt = 0
 
             # current work reward, after each time step, how many jobs left in the machine
@@ -216,7 +271,10 @@ class Env:
         # plt.pause(0.01)  # automatic
 
     def get_reward(self):
-
+        """
+        Return rewards (penalties) of pending jobs, weighted by their status
+        (if they are being processed, waiting in the job queue, or backlogged)
+        """
         reward = 0
         for j in self.machine.running_job:
             reward += self.pa.delay_penalty / float(j.len)
@@ -232,13 +290,21 @@ class Env:
         return reward
 
     def step(self, a, repeat=False):
-
+        """
+        Advance the system forward, either by allocating a job or advancing 
+        to the next timestep.
+            1) 
+            2)
+            3)
+            4)
+        """
         status = None
 
         done = False
         reward = 0
         info = None
 
+        ### determine if system should advance to next timestep or 
         if a == self.pa.num_nw:  # explicit void action
             status = 'MoveOn'
         elif self.job_slot.slot[a] is None:  # implicit void action
@@ -365,6 +431,11 @@ class JobRecord:
 
 
 class Machine:
+    """
+    Contains the resources used in job allocation. Responsible for 
+    assining resources to any jobs passed to it and advancing the
+    state of its resources across timesteps
+    """
     def __init__(self, pa):
         self.num_res = pa.num_res
         self.time_horizon = pa.time_horizon
@@ -382,7 +453,10 @@ class Machine:
         self.canvas = np.zeros((pa.num_res, pa.time_horizon, pa.res_slot))
 
     def allocate_job(self, job, curr_time):
-
+        """ Attempts to allocate a job in available machine resources.
+            Returns true, if the job allocation is successful
+                    false, otherwise
+        """
         allocated = False
 
         for t in xrange(0, self.time_horizon - job.len):
@@ -424,7 +498,10 @@ class Machine:
         return allocated
 
     def time_proceed(self, curr_time):
-
+        """
+        Advances machine's state forward in time by shifting all resource
+        slots up a row and resetting the bottom resource slot
+        """
         self.avbl_slot[:-1, :] = self.avbl_slot[1:, :]
         self.avbl_slot[-1, :] = self.res_slot
 
@@ -440,6 +517,10 @@ class Machine:
 
 
 class ExtraInfo:
+    """ 
+    Miscillaneous environment properties, including the time since 
+    the last new job arrived.
+    """
     def __init__(self, pa):
         self.time_since_last_new_job = 0
         self.max_tracking_time_since_last_job = pa.max_track_since_new

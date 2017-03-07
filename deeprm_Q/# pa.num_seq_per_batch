@@ -1,0 +1,14 @@
+
+
+pa.num_seq_per_batch - number of episodes each worker runs for (number of trajectories)
+pa.episode_max_length - max length of an episode
+pa.discount - discount factor
+pa.num_ex - number of jobsets
+
+TODO: what does repeat do in env? should we set it to True
+TODO: what to do for pa.batch_size? Before, this determined number of workers
+
+pa.network_input_height - input height
+pa.network_input_width - input width
+
+pa.network_output_dim - output dim

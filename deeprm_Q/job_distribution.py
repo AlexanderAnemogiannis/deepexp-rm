@@ -22,6 +22,9 @@ class Dist:
         self.other_res_lower = 1
         self.other_res_upper = max_nw_size / 5
 
+    ''' jobs have a duration uniformly b/t [1, job_len + 1] and resource demand
+        indpendently, uniformly drawn from [1, max_nw_size] for each resource
+    '''
     def normal_dist(self):
 
         # new work duration
@@ -34,6 +37,11 @@ class Dist:
 
         return nw_len, nw_size
 
+    ''' jobs have a small duration with probability job_small_chance and
+        and resource demands between either 
+            1) [dominant_res_lower, dominant_res_upper], w/ prob 1/num_res
+            2) [other_res_lower, other_res_upper], w/ prob 1-1/num_res
+    '''
     def bi_model_dist(self):
 
         # -- job length --
