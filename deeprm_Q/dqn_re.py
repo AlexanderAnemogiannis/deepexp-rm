@@ -18,86 +18,26 @@ import slow_down_cdf
 from collections import deque
 from adversarial_q_learner import AdversarialQLearner, build_q_learner
 
-def run_simulation(env, session, deep_qnet, max_episodes, max_steps, render=True, debug=True, adversarial=True, train=True):
+### get discounted reward for sequence of rewards x, discount factor gamma
+def discount(x, gamma):
     """
-    
-    Assumes that deep_qnet.reset() has been called.
-
-    If training, returns number of episodes it took to train.
-    If testing, returns the episode history for the last 100 episodes.
-
+    Given vector x, computes a vector y such that
+    y[i] = x[i] + gamma * x[i+1] + gamma^2 x[i+2] + ...
     """
+    out = np.zeros(len(x))
+    out[-1] = x[-1]
+    for i in reversed(xrange(len(x)-1)):
+        out[i] = x[i] + gamma*out[i+1]
+    assert x.ndim >= 1
+    # More efficient version:
+    # scipy.signal.lfilter([1],[1,-gamma],x[::-1], axis=0)[::-1]
+    return out
 
-    if train:
-        # keep track of total rewards from last 100 episodes
-        episode_history = deque(maxlen=100)
-    else:
-        episode_history = deque(maxlen=max_episodes)
-
-    for ep in range(max_episodes):
-
-        # reset the environment
-        env.reset()
-
-        state = env.observe()
-
-        # keep track of total rewards during this episode
-        total_rewards = 0 
-
-        for t in range(max_steps):
-
-            if train:
-                # take next action according to eps-greedy policy
-                action = deep_qnet.e_greedy_policy(state[np.newaxis, :])
-                next_state, reward, done, _ = env.step(action)
-                total_rewards += reward
-
-                # store the experience
-                deep_qnet.store_experience(state, action, reward, next_state, done)
-
-                # train the model
-                deep_qnet.updateModel()
-
-            else:
-                # take next action greedily with respect to Q
-                action = deep_qnet.greedy_policy(state[np.newaxis, :])
-                next_state, reward, done, _ = env.step(action)
-                total_rewards += reward
-
-
-            # get adverserial state
-            #if (adversarial) and (ep == 0) and (t == 0):
-            if (adversarial) and (t == 0):
-                adv_state = deep_qnet.get_adversarial_state(EPS, state, action, reward, next_state, done)
-                env._set_state(adv_state)
-                next_state = adv_state
-
-            # advance to next state
-            state = next_state
-
-            if done:
-                break
-
-        episode_history.append(total_rewards)
-        mean_rewards = np.mean(episode_history)
-
-        if debug:
-            print("Episode {}".format(ep))
-            print("Finished after {} timesteps".format(t+1))
-            print("Reward for this episode: {}".format(total_rewards))
-            print("Average reward for last 100 episodes: {}".format(mean_rewards))
-
-        # TODO: when is environment solved? or just run for max num of iters..
-
-        # if train and mean_rewards >= 195.0:
-        #     #print("Environment {} solved after {} episodes".format(env_name, ep+1))
-        #     print("Solved after {} episodes".format(ep + 1))
-        #     return (ep + 1)
-
-    if train:
-        return max_episodes
-    else:
-        return episode_history
+def get_entropy(vec):
+    entropy = - np.sum(vec * np.log(vec))
+    if np.isnan(entropy):
+        entropy = 0
+    return entropy
 
 def launch(pa, pg_resume=None, render=False, repre='image', end='no_new_job'):
 
@@ -180,35 +120,44 @@ def launch(pa, pg_resume=None, render=False, repre='image', end='no_new_job'):
 
         ex_counter = 0
 
+        all_slowdown = []
+
         ### for each jobset
         for ex in xrange(pa.num_ex):
 
             ex_idx = ex_indices[ex]
             current_env = envs[ex_ids]
 
-            # TODO: am I supposed to just give the agent different environments like this???
-            episode_history = deque(maxlen=100)
-
             # TODO: note that we aren't using batch size...
             # TODO: how to integrate batch size...
+
+            enter_time = []
+            finish_time = []
+            job_len = []
+            cum_rewards = []
 
             # iterate over episodes
             for ep in range(pa.num_seq_per_batch):
 
+                rewards = []
+
                 # reset the environment
                 env.reset()
 
-                state = np.array(env.observe())
-
-                # keep track of total rewards during this episode
-                total_rewards = 0 
+                # note that we flatten the image
+                state = list(np.array(env.observe()).flat)
 
                 for t in range(max_steps):
 
                     # take next action according to eps-greedy policy
                     action = deep_qnet.e_greedy_policy(state[np.newaxis, :])
-                    next_state, reward, done, _ = env.step(action)
-                    total_rewards += reward
+                    next_state, reward, done, info = env.step(action)
+                    next_state = list(np.array(next_state).flat)
+                    rewards.append(reward)
+
+                    enter_time = np.array([info.record[i].enter_time for i in xrange(len(info.record))])
+                    finish_time = np.array([info.record[i].finish_time for i in xrange(len(info.record))])
+                    job_len = np.array([info.record[i].len for i in xrange(len(info.record))])
 
                     # store the experience
                     deep_qnet.store_experience(state, action, reward, next_state, done)
@@ -216,54 +165,24 @@ def launch(pa, pg_resume=None, render=False, repre='image', end='no_new_job'):
                     # train the model
                     deep_qnet.updateModel()
 
-                    # get adverserial state
-                    #if (adversarial) and (ep == 0) and (t == 0):
-                    if (adversarial) and (t == 0):
-                        adv_state = deep_qnet.get_adversarial_state(EPS, state, action, reward, next_state, done)
-                        env._set_state(adv_state)
-                        next_state = adv_state
-
                     # advance to next state
                     state = next_state
 
                     if done:
                         break
 
-                episode_history.append(total_rewards)
-                mean_rewards = np.mean(episode_history)
+                enter_time.append(np.array([info.record[i].enter_time for i in xrange(len(info.record))]))
+                finish_time.append(np.array([info.record[i].finish_time for i in xrange(len(info.record))]))
+                job_len.append(np.array([info.record[i].len for i in xrange(len(info.record))]))
+                cum_rewards.append(discount(rewards, pa.discount))
 
-                if debug:
-                    print("Episode {}".format(ep))
-                    print("Finished after {} timesteps".format(t+1))
-                    print("Reward for this episode: {}".format(total_rewards))
-                    print("Average reward for last 100 episodes: {}".format(mean_rewards))
+            enter_time = np.concatenate(enter_time)
+            finish_time = np.concatenate(finish_time)
+            job_len = np.concatenate(job_len)
+            finished_idx = (finish_time >= 0)
+            slowdown = (finish_time[finished_idx] - enter_time[finished_idx]) / job_len[finished_idx]
 
-                # TODO: when is environment solved? or just run for max num of iters..
-
-                # if train and mean_rewards >= 195.0:
-                #     #print("Environment {} solved after {} episodes".format(env_name, ep+1))
-                #     print("Solved after {} episodes".format(ep + 1))
-                #     return (ep + 1)
-
-            if train:
-                return max_episodes
-            else:
-                return episode_history
-
-
-        # assemble gradients
-        grads = grads_all[0]
-        for i in xrange(1, len(grads_all)):
-            for j in xrange(len(grads)):
-                grads[j] += grads_all[i][j]
-
-        # propagate network parameters to others
-        params = pg_learners[pa.batch_size].get_params()
-
-        rmsprop_updates_outside(grads, params, accums, pa.lr_rate, pa.rms_rho, pa.rms_eps)
-
-        for i in xrange(pa.batch_size + 1):
-            pg_learners[i].set_net_params(params)
+            all_slowdown.extend(slowdown)
 
         timer_end = time.time()
 
@@ -276,7 +195,6 @@ def launch(pa, pg_resume=None, render=False, repre='image', end='no_new_job'):
         print "MeanRew: \t %s +- %s" % (np.mean(eprews), np.std(eprews))
         print "MeanSlowdown: \t %s" % np.mean(all_slowdown)
         print "MeanLen: \t %s +- %s" % (np.mean(eplens), np.std(eplens))
-        print "MeanEntropy \t %s" % (np.mean(all_entropy))
         print "Elapsed time\t %s" % (timer_end - timer_start), "seconds"
         print "-----------------"
 
