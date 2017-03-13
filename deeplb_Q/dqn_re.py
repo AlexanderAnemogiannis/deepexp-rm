@@ -14,7 +14,7 @@ import pg_network
 import slow_down_cdf
 
 from collections import deque
-from adversarial_q_learner import AdversarialQLearner, build_q_learner
+from deep_q_learner import DeepQLearner, build_q_learner
 import tensorflow as tf
 
 ### get discounted reward for sequence of rewards x, discount factor gamma
@@ -169,20 +169,20 @@ def launch(pa, pg_resume=None, render=False, repre='image', end='no_new_job'):
     # initialize the q networks
     sess = tf.Session()
     optimizer = tf.train.RMSPropOptimizer(learning_rate=0.0001, decay=0.9)
-    q_learner = AdversarialQLearner(session=sess, optimizer=optimizer, q_network=build_q_learner, 
+    q_learner = DeepQLearner(session=sess, optimizer=optimizer, q_network=build_q_learner, 
                                     state_dim=state_dim, num_actions=num_actions, discount_factor=pa.discount)
 
     envs = []
 
-    nw_len_seqs, nw_size_seqs = job_distribution.generate_sequence_work(pa, seed=42)
+    nw_len_seqs = job_distribution.generate_sequence_work(pa, seed=42)
 
     ### create sequence of environments for each of the num_ex job sets/sequences
     for ex in xrange(pa.num_ex):
 
         print "-prepare for env-", ex
 
-        env = environment.Env(pa, nw_len_seqs=nw_len_seqs, nw_size_seqs=nw_size_seqs,
-                              render=False, repre=repre, end=end)
+        env = environment.Env(pa, nw_len_seqs=nw_len_seqs, render=False,
+                              repre=repre, end=end)
         env.seq_no = ex
         envs.append(env)
 

@@ -9,12 +9,11 @@ import parameters
 import pg_re
 import pg_su
 import slow_down_cdf
-import dqn_re 
-
+import dqn_re
 
 def script_usage():
     print('--exp_type <type of experiment> \n'
-          '--num_res <number of resources> \n'
+          '--num_q <number of queues> \n'
           '--num_nw <number of visible new work> \n'
           '--simu_len <simulation length> \n'
           '--num_ex <number of examples> \n'
@@ -56,7 +55,7 @@ def main():
         opts, args = getopt.getopt(
             sys.argv[1:],
             "hi:o:", ["exp_type=",
-                      "num_res=",
+                      "num_q=",
                       "num_nw=",
                       "simu_len=",
                       "num_ex=",
@@ -90,8 +89,8 @@ def main():
             sys.exit()
         elif opt in ("-e", "--exp_type"):
             type_exp = arg
-        elif opt in ("-n", "--num_res"):
-            pa.num_res = int(arg)
+        elif opt in ("-n", "--num_q"):
+            pa.num_q = int(arg)
         elif opt in ("-w", "--num_nw"):
             pa.num_nw = int(arg)
         elif opt in ("-s", "--simu_len"):
