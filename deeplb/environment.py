@@ -201,20 +201,28 @@ class Env:
         Return rewards (penalties) of pending jobs, weighted by their status
         (if they are being processed or waiting in the job queue)
         """
+        
         reward = 0
+        
+        # use reward that incetivizes minimizing avg slowdown
         for j in self.machine.running_job:
             reward += self.pa.delay_penalty / float(j.len)
 
         for j in self.job_slot.slot:
             if j is not None:
                 reward += self.pa.hold_penalty / float(j.len)
+        for j in self.job_backlog.backlog:
+            if j is not None:
+                reward += self.pa.dismiss_penalty / float(j.len)
 
         return reward
 
     def step(self, a, repeat=False):
         """
         Assign pending job to queue designated by action a. Then either advance
-        to the next timestep or terminate (if all jobs have been processed).
+        to the next timestep or terminate (if all jobs have been processed). If
+        repeat is False, increment the job sequence counter, otherwise the next
+        trajectory will be over the same sequence.
         """
         status = None
 
@@ -227,86 +235,92 @@ class Env:
         #######################################################################
 
         # skip assignment if there is no pending job
-        if self.job_slot.slot[0] is not None:
+        if self.job_slot.slot[0] is None:
+            status = 'MoveOn'
 
+        else:
             # attempt to make allocation to a'th queue
             allocated = self.machine.allocate_job(self.job_slot.slot[0], a, 
                                                   self.curr_time)
             
             # update system parameters if previous allocation succeeded
-            if allocated:  
-                self.job_record.record[self.job_slot.slot[0].id] = self.job_slot.slot[0]
-                self.job_slot.slot[0] = None
-
-                # dequeue backlog
-                if self.job_backlog.curr_size > 0:
-                    # if backlog empty, it will be 0
-                    self.job_slot.slot[0] = self.job_backlog.backlog[0]  
-                    self.job_backlog.backlog[: -1] = self.job_backlog.backlog[1:]
-                    self.job_backlog.backlog[-1] = None
-                    self.job_backlog.curr_size -= 1
+            if allocated:
+                status = 'Allocate'
+            else:
+                status = 'MoveOn'  
 
         #######################################################################
         # Advance a timestep and adjust environmental parameters accordingly
         #######################################################################
+        if status == 'MoveOn':
+            self.curr_time += 1
+            self.machine.time_proceed(self.curr_time)
+            self.extra_info.time_proceed()
 
-        self.curr_time += 1
-        self.machine.time_proceed(self.curr_time)
-        self.extra_info.time_proceed()
+            # add new jobs
+            self.seq_idx += 1
 
-        # add new jobs
-        self.seq_idx += 1
+            # ----- given end criteria, determine if job ------
+            # ----- sequence has finished processing     ------
 
-        # ----- given end criteria, determine if job ------
-        # ----- sequence has finished processing     ------
+            # end of new job sequence
+            if self.end == "no_new_job": 
+                if self.seq_idx >= self.pa.simu_len:
+                    done = True
 
-        # end of new job sequence
-        if self.end == "no_new_job": 
-            if self.seq_idx >= self.pa.simu_len:
-                done = True
+            # everything has to be finished
+            elif self.end == "all_done":  
+                if self.seq_idx >= self.pa.simu_len and \
+                   len(self.machine.running_job) == 0 and \
+                   all(s is None for s in self.job_slot.slot) and \
+                   all(s is None for s in self.job_backlog.backlog):
+                    done = True
 
-        # everything has to be finished
-        elif self.end == "all_done":  
-            if self.seq_idx >= self.pa.simu_len and \
-               len(self.machine.running_job) == 0 and \
-               all(s is None for s in self.job_slot.slot) and \
-               all(s is None for s in self.job_backlog.backlog):
-                done = True
+                # run too long, force termination
+                elif self.curr_time > self.pa.episode_max_length:
+                    done = True
 
-            # run too long, force termination
-            elif self.curr_time > self.pa.episode_max_length:
-                done = True
+            # if job sequence hasn't terminated, continue simulation
+            if not done:
+                # check that the job sequence has remaining entries
+                if self.seq_idx < self.pa.simu_len:
+                    new_job = self.get_new_job_from_seq(self.seq_no, self.seq_idx)
 
-        # if job sequence hasn't terminated, continue simulation
-        if not done:
-            # check that the job sequence has remaining entries
-            if self.seq_idx < self.pa.simu_len:
-                new_job = self.get_new_job_from_seq(self.seq_no, self.seq_idx)
+                    # check that job popped from job sequence isn't empty
+                    if new_job.len > 0:
+                        # if job queue/slot is open, use it to store new job
+                        to_backlog = True
+                        for i in xrange(self.pa.num_nw):
+                            if self.job_slot.slot[i] is None:
+                                self.job_slot.slot[i] = new_job
+                                self.job_record.record[new_job.id] = new_job
+                                to_backlog = False
+                                break
+                        # otherwise attempt to store the job in the backlog
+                        if to_backlog:
+                            if self.job_backlog.curr_size < self.pa.backlog_size:
+                                self.job_backlog.backlog[self.job_backlog.curr_size] = new_job
+                                self.job_backlog.curr_size += 1
+                                self.job_record.record[new_job.id] = new_job
+                            else:  # abort, backlog full
+                                print("Backlog is full.")
+                                # exit(1)
 
-                # check that job popped from job sequence isn't empty
-                if new_job.len > 0:
-                    # if job queue/slot is open, use it to store new job
-                    to_backlog = True
-                    for i in xrange(self.pa.num_nw):
-                        if self.job_slot.slot[i] is None:
-                            self.job_slot.slot[i] = new_job
-                            self.job_record.record[new_job.id] = new_job
-                            to_backlog = False
-                            break
-                    # otherwise attempt to store the job in the backlog
-                    if to_backlog:
-                        if self.job_backlog.curr_size < self.pa.backlog_size:
-                            self.job_backlog.backlog[self.job_backlog.curr_size] = new_job
-                            self.job_backlog.curr_size += 1
-                            self.job_record.record[new_job.id] = new_job
-                        else:  # abort, backlog full
-                            print("Backlog is full.")
-                            # exit(1)
+                        self.extra_info.new_job_comes()
 
-                    self.extra_info.new_job_comes()
+            reward = self.get_reward()
 
-        reward = self.get_reward()
+        if status == 'Allocate':
+            self.job_record.record[self.job_slot.slot[0].id] = self.job_slot.slot[0]
+            self.job_slot.slot[0] = None
 
+            # dequeue backlog
+            if self.job_backlog.curr_size > 0:
+                # if backlog empty, it will be 0
+                self.job_slot.slot[0] = self.job_backlog.backlog[0]  
+                self.job_backlog.backlog[: -1] = self.job_backlog.backlog[1:]
+                self.job_backlog.backlog[-1] = None
+                self.job_backlog.curr_size -= 1
                  
         # allocation and time advancement complete - update remaining
         # system parameters
@@ -393,17 +407,14 @@ class Machine:
         """ 
         Allocates job in the queue indicated by q_idx
         """
+
         allocated = False
 
-        # return false if the designated queue has no room for the pending job
-        if self.avbl_slot[q_idx] < job.len:
-            return False
-
-        # otherwise, update the machine status
-        else:
+        # allocate the job if there's room for it
+        if self.avbl_slot[q_idx] >=  job.len:
             # update the job's start and stop times
-            job.start_time = curr_time + (self.time_horizon - \
-                                          self.avbl_slot[q_idx])
+            job_delay = self.time_horizon - self.avbl_slot[q_idx]
+            job.start_time = curr_time + job_delay
             job.finish_time = job.start_time + job.len
 
             # update the available slots in queue q_idx
@@ -424,8 +435,10 @@ class Machine:
             for t in range(canvas_start_time, canvas_end_time):
                 self.canvas[t, q_idx] = new_color
 
-            # inidicate that job was successfully allocated
-            return True
+            # indicate that job was successfully allocated
+            allocated = True
+
+        return allocated
 
 
     def time_proceed(self, curr_time):
@@ -433,9 +446,11 @@ class Machine:
         Advances machine's state forward in time by shifting all resource
         slots up a row and resetting the bottom resource slot
         """
-        self.avbl_slot[:-1] = self.avbl_slot[1:]
-        self.avbl_slot[-1] = self.time_horizon
+        # free a timeslot for each queue
+        for i in range(len(self.avbl_slot)):
+            self.avbl_slot[i] += (self.avbl_slot[i] < self.time_horizon)
 
+        # remove running jobs that have terminated
         for job in self.running_job:
             if job.finish_time <= curr_time:
                 self.running_job.remove(job)

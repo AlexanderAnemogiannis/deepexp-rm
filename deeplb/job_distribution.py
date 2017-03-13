@@ -7,7 +7,7 @@ class Dist:
         self.num_q = num_q
         self.max_job_len = max_job_len
 
-        self.job_small_chance = 0.8
+        self.job_small_chance = 0.7
 
         self.job_len_big_lower = max_job_len * 2 / 3
         self.job_len_big_upper = max_job_len

@@ -247,7 +247,7 @@ def launch(pa, pg_resume=None, render=False, repre='image', end='no_new_job'):
 
     nw_len_seqs = job_distribution.generate_sequence_work(pa, seed=42)
 
-    ### create sequence of environments for each of the num_ex job sets/sequences
+    # create sequence of environments for each of the num_ex job sets/sequences
     for ex in xrange(pa.num_ex):
 
         print "-prepare for env-", ex

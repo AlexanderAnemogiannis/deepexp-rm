@@ -3,6 +3,7 @@ import cPickle
 import matplotlib.pyplot as plt
 
 import environment
+import job_distribution
 import parameters
 import pg_network
 import other_agents
@@ -57,21 +58,14 @@ def get_traj(test_type, pa, env, episode_max_length, pg_resume=None, render=Fals
         if test_type == 'PG':
             a = pg_learner.choose_action(ob)
 
-        elif test_type == 'Tetris':
-            a = other_agents.get_packer_action(env.machine, env.job_slot)
-
-        elif test_type == 'SJF':
-            a = other_agents.get_sjf_action(env.machine, env.job_slot)
-
         elif test_type == 'Random':
-            a = other_agents.get_random_action(env.job_slot)
+            a = other_agents.get_random_action(env.machine)
 
         elif test_type == 'LLQ':
             a = other_agents.get_llq_action(env.machine)
-
+        
         ob, rew, done, info = env.step(a, repeat=True)
-
-        rews.append(rew)
+        rews.append(rew)        
 
         if done: break
         if render: env.render()
@@ -84,12 +78,15 @@ def launch(pa, pg_resume=None, render=False, plot=False, repre='image', end='no_
 
     # ---- Parameters ----
 
-    test_types = ['LLQ']
+    test_types = ['LLQ', 'Random']
 
     if pg_resume is not None:
         test_types = ['PG'] + test_types
 
-    env = environment.Env(pa, render=render, repre=repre, end=end)
+    nw_len_seqs = job_distribution.generate_sequence_work(pa, seed=42)
+    env = environment.Env(pa, nw_len_seqs=nw_len_seqs, render=render,
+                              repre=repre, end=end)
+    # env = environment.Env(pa, render=render, repre=repre, end=end)
 
     all_discount_rews = {}
     jobs_slow_down = {}
@@ -200,7 +197,7 @@ def main():
     plot = True  # plot slowdown cdf
 
     pg_resume = None
-    pg_resume = 'data/pg_re_discount_1_rate_0.3_simu_len_200_num_seq_per_batch_20_ex_10_nw_10_1450.pkl'
+    # pg_resume = 'data/pg_re_discount_1_rate_0.3_simu_len_200_num_seq_per_batch_20_ex_10_nw_10_1450.pkl'
     # pg_resume = 'data/pg_re_1000_discount_1_5990.pkl'
 
     pa.unseen = True
